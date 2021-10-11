@@ -38,7 +38,7 @@ class Model(object):
         self.rng = np.random.default_rng(seed=0)
 
         # TODO: Add custom initialization for your model here if necessary
-        self.gpr = GaussianProcessRegressor()
+        self.gpr = GaussianProcessRegressor(RBF(.067, 'fixed'))
 
     def predict(self, x: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
