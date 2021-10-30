@@ -38,7 +38,8 @@ class Model(object):
         self.rng = np.random.default_rng(seed=0)
 
         # TODO: Add custom initialization for your model here if necessary
-        self.gpr = GaussianProcessRegressor(RBF(.067, 'fixed'))
+        kernel = RBF(.06,'fixed')
+        self.gpr = GaussianProcessRegressor(kernel=kernel,normalize_y=True)
 
     def predict(self, x: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -48,12 +49,21 @@ class Model(object):
             Tuple of three 1d NumPy float arrays, each of shape (NUM_SAMPLES,),
             containing your predictions, the GP posterior mean, and the GP posterior stddev (in that order)
         """
-
         # TODO: Use your GP to estimate the posterior mean and stddev for each location here
-        # gp_mean = np.zeros(x.shape[0], dtype=float)
-        # gp_std = np.zeros(x.shape[0], dtype=float)
+        # gp_mean = np.array([])
+        # gp_std = np.array([])
+        # for xi in x:
+        #     mean_i, std_i = self.gpr.predict(xi, return_std=True)
+        #     np.append(gp_mean,mean_i)
+        #     np.append(gp_std,std_i)
+        #     y_guess = mean_i
+        #     R = 0
+        #     optimizer = optim.SGD(y_guess)
+        #     for i in range(100):
+        #         y_star = mean_i-3*std_i+i*std_i/100
+        #         R += self.cost_function(y_star, y_guess)
+        #     y_guess = R.grad.
         gp_mean, gp_std = self.gpr.predict(x, return_std=True)
-
         # TODO: Use the GP posterior to form your predictions here
         predictions = gp_mean
 
@@ -67,6 +77,9 @@ class Model(object):
         """
 
         # TODO: Fit your model here
+        # train_x = train_x[::2]
+        # train_y = train_y[::2]
+
         self.gpr.fit(train_x, train_y)
         # pass
 
