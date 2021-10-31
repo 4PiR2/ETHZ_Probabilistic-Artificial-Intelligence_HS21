@@ -15,6 +15,7 @@ from util import ece, ParameterDistribution
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
 EXTENDED_EVALUATION = False
 
+USE_CUDA = torch.cuda.is_available()
 
 def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.curdir, output_dir: str = '/results/') -> 'Model':
     """
@@ -60,7 +61,7 @@ class Model(object):
         self.batch_size = 128  # training batch size
         learning_rate = 1e-3  # training learning rates
         hidden_layers = (100, 100)  # for each entry, creates a hidden layer with the corresponding number of units
-        use_densenet = False  # set this to True in order to run a DenseNet for comparison
+        use_densenet = True  # set this to True in order to run a DenseNet for comparison
         self.print_interval = 100  # number of batches until updated metrics are displayed during training
 
         # Determine network type
@@ -72,6 +73,9 @@ class Model(object):
             # BayesNet
             print('Using a BayesNet model')
             self.network = BayesNet(in_features=28 * 28, hidden_features=hidden_layers, out_features=10)
+
+        if USE_CUDA:
+            self.network.cuda()
 
         # Optimizer for training
         # Feel free to try out different optimizers
@@ -97,6 +101,9 @@ class Model(object):
             num_batches = len(train_loader)
             for batch_idx, (batch_x, batch_y) in enumerate(train_loader):
                 # batch_x are of shape (batch_size, 784), batch_y are of shape (batch_size,)
+                if USE_CUDA:
+                    batch_x = batch_x.cuda()
+                    batch_y = batch_y.cuda()
 
                 self.network.zero_grad()
 
@@ -144,8 +151,10 @@ class Model(object):
         self.network.eval()
 
         probability_batches = []
-        for batch_x, batch_y in data_loader:
-            current_probabilities = self.network.predict_probabilities(batch_x).detach().numpy()
+        for batch_x, _ in data_loader:
+            if USE_CUDA:
+                batch_x = batch_x.cuda()
+            current_probabilities = self.network.predict_probabilities(batch_x).cpu().detach().numpy()
             probability_batches.append(current_probabilities)
 
         output = np.concatenate(probability_batches, axis=0)
@@ -525,11 +534,11 @@ class DenseNet(nn.Module):
 
 
 def main():
-    raise RuntimeError(
-        'This main method is for illustrative purposes only and will NEVER be called by the checker!\n'
-        'The checker always calls run_solution directly.\n'
-        'Please implement your solution exclusively in the methods and classes mentioned in the task description.'
-    )
+    # raise RuntimeError(
+    #     'This main method is for illustrative purposes only and will NEVER be called by the checker!\n'
+    #     'The checker always calls run_solution directly.\n'
+    #     'Please implement your solution exclusively in the methods and classes mentioned in the task description.'
+    # )
 
     # Load training data
     data_dir = os.curdir

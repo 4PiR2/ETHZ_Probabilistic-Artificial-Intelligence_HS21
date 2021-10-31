@@ -1,0 +1,8 @@
+FROM nvcr.io/nvidia/pytorch:21.10-py3
+ADD ./requirements_g.txt /requirements_g.txt
+RUN pip install --no-cache-dir -U pip && pip install --no-cache-dir -r /requirements_g.txt
+WORKDIR /code
+ADD * /code/
+ADD pytransform /code/pytransform
+WORKDIR /code
+CMD python -u checker_client.py
