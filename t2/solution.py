@@ -125,7 +125,7 @@ class Model(object):
                     # TODO: Implement Bayes by backprop training here
                     current_logits, log_prior, log_variational_posterior = self.network(batch_x)
                     loss = F.nll_loss(F.log_softmax(current_logits, dim=1), batch_y, reduction='sum')
-                    pi_i = (2. ** (num_batches - batch_idx - 1)) / (2. ** num_batches - 1)
+                    pi_i = (2. ** (num_batches - batch_idx - 1)) / (2. ** num_batches - 1.)
                     loss += (log_variational_posterior - log_prior) * pi_i
                     loss.backward()
 
@@ -293,8 +293,8 @@ class BayesNet(nn.Module):
         # TODO: Perform a full pass through your BayesNet as described in this method's docstring.
         #  You can look at DenseNet to get an idea how a forward pass might look like.
         #  Don't forget to apply your activation function in between BayesianLayers!
-        log_prior = 0.
-        log_variational_posterior = 0.
+        log_prior = torch.tensor(0., device=device)
+        log_variational_posterior = torch.tensor(0., device=device)
         current_features = x
 
         for idx, current_layer in enumerate(self.layers):
