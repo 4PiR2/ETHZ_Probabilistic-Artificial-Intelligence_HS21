@@ -15,7 +15,7 @@ from util import ece, ParameterDistribution
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
 EXTENDED_EVALUATION = False
 
-USE_CUDA = torch.cuda.is_available()
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.curdir, output_dir: str = '/results/') -> 'Model':
     """
@@ -61,7 +61,7 @@ class Model(object):
         self.batch_size = 128  # training batch size
         learning_rate = 1e-3  # training learning rates
         hidden_layers = (100, 100)  # for each entry, creates a hidden layer with the corresponding number of units
-        use_densenet = True  # set this to True in order to run a DenseNet for comparison
+        use_densenet = False  # set this to True in order to run a DenseNet for comparison
         self.print_interval = 100  # number of batches until updated metrics are displayed during training
 
         # Determine network type
@@ -74,8 +74,7 @@ class Model(object):
             print('Using a BayesNet model')
             self.network = BayesNet(in_features=28 * 28, hidden_features=hidden_layers, out_features=10)
 
-        if USE_CUDA:
-            self.network.cuda()
+        self.network.to(device)
 
         # Optimizer for training
         # Feel free to try out different optimizers
@@ -101,9 +100,8 @@ class Model(object):
             num_batches = len(train_loader)
             for batch_idx, (batch_x, batch_y) in enumerate(train_loader):
                 # batch_x are of shape (batch_size, 784), batch_y are of shape (batch_size,)
-                if USE_CUDA:
-                    batch_x = batch_x.cuda()
-                    batch_y = batch_y.cuda()
+                batch_x = batch_x.to(device)
+                batch_y = batch_y.to(device)
 
                 self.network.zero_grad()
 
@@ -125,6 +123,11 @@ class Model(object):
                     assert isinstance(self.network, BayesNet)
 
                     # TODO: Implement Bayes by backprop training here
+                    current_logits, log_prior, log_variational_posterior = self.network(batch_x)
+                    loss = F.nll_loss(F.log_softmax(current_logits, dim=1), batch_y, reduction='sum')
+                    pi_i = (2. ** (num_batches - batch_idx - 1)) / (2. ** num_batches - 1)
+                    loss += (log_variational_posterior - log_prior) * pi_i
+                    loss.backward()
 
                 self.optimizer.step()
 
@@ -152,8 +155,7 @@ class Model(object):
 
         probability_batches = []
         for batch_x, _ in data_loader:
-            if USE_CUDA:
-                batch_x = batch_x.cuda()
+            batch_x = batch_x.to(device)
             current_probabilities = self.network.predict_probabilities(batch_x).cpu().detach().numpy()
             probability_batches.append(current_probabilities)
 
@@ -188,7 +190,7 @@ class BayesianLayer(nn.Module):
         #  You can create constants using torch.tensor(...).
         #  Do NOT use torch.Parameter(...) here since the prior should not be optimized!
         #  Example: self.prior = MyPrior(torch.tensor(0.0), torch.tensor(1.0))
-        self.prior = None
+        self.prior = UnivariateGaussian(torch.tensor(0.), torch.tensor(1.))
         assert isinstance(self.prior, ParameterDistribution)
         assert not any(True for _ in self.prior.parameters()), 'Prior cannot have parameters'
 
@@ -202,7 +204,10 @@ class BayesianLayer(nn.Module):
         #      torch.nn.Parameter(torch.zeros((out_features, in_features))),
         #      torch.nn.Parameter(torch.ones((out_features, in_features)))
         #  )
-        self.weights_var_posterior = None
+        self.weights_var_posterior = MultivariateDiagonalGaussian(
+            torch.nn.Parameter(torch.zeros((out_features, in_features))),
+            torch.nn.Parameter(torch.ones((out_features, in_features)))
+        )
 
         assert isinstance(self.weights_var_posterior, ParameterDistribution)
         assert any(True for _ in self.weights_var_posterior.parameters()), 'Weight posterior must have parameters'
@@ -210,7 +215,10 @@ class BayesianLayer(nn.Module):
         if self.use_bias:
             # TODO: As for the weights, create the bias variational posterior instance here.
             #  Make sure to follow the same rules as for the weight variational posterior.
-            self.bias_var_posterior = None
+            self.bias_var_posterior = MultivariateDiagonalGaussian(
+                torch.nn.Parameter(torch.zeros(out_features)),
+                torch.nn.Parameter(torch.ones(out_features))
+            )
             assert isinstance(self.bias_var_posterior, ParameterDistribution)
             assert any(True for _ in self.bias_var_posterior.parameters()), 'Bias posterior must have parameters'
         else:
@@ -232,10 +240,15 @@ class BayesianLayer(nn.Module):
         # TODO: Perform a forward pass as described in this method's docstring.
         #  Make sure to check whether `self.use_bias` is True,
         #  and if yes, include the bias as well.
-        log_prior = torch.tensor(0.0)
-        log_variational_posterior = torch.tensor(0.0)
-        weights = None
-        bias = None
+        weights = self.weights_var_posterior.sample()
+        log_prior = self.prior.log_likelihood(weights)
+        log_variational_posterior = self.weights_var_posterior.log_likelihood(weights)
+        if self.use_bias:
+            bias = self.bias_var_posterior.sample()
+            log_prior += self.prior.log_likelihood(bias)
+            log_variational_posterior += self.bias_var_posterior.log_likelihood(bias)
+        else:
+            bias = None
 
         return F.linear(inputs, weights, bias), log_prior, log_variational_posterior
 
@@ -280,9 +293,19 @@ class BayesNet(nn.Module):
         # TODO: Perform a full pass through your BayesNet as described in this method's docstring.
         #  You can look at DenseNet to get an idea how a forward pass might look like.
         #  Don't forget to apply your activation function in between BayesianLayers!
-        log_prior = torch.tensor(0.0)
-        log_variational_posterior = torch.tensor(0.0)
-        output_features = None
+        log_prior = 0.
+        log_variational_posterior = 0.
+        current_features = x
+
+        for idx, current_layer in enumerate(self.layers):
+            new_features, new_log_prior, new_log_variational_posterior = current_layer(current_features)
+            if idx < len(self.layers) - 1:
+                new_features = self.activation(new_features)
+            current_features = new_features
+            log_prior += new_log_prior
+            log_variational_posterior += new_log_variational_posterior
+
+        output_features = current_features
 
         return output_features, log_prior, log_variational_posterior
 
@@ -315,14 +338,15 @@ class UnivariateGaussian(ParameterDistribution):
         assert sigma > 0
         self.mu = mu
         self.sigma = sigma
+        self.distribution = torch.distributions.normal.Normal(self.mu, self.sigma) # this might not change with parameters
 
     def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
         # TODO: Implement this
-        return 0.0
+        return torch.sum(self.distribution.log_prob(values))
 
     def sample(self) -> torch.Tensor:
         # TODO: Implement this
-        raise NotImplementedError()
+        return self.distribution.sample()
 
 
 class MultivariateDiagonalGaussian(ParameterDistribution):
@@ -337,16 +361,20 @@ class MultivariateDiagonalGaussian(ParameterDistribution):
     def __init__(self, mu: torch.Tensor, rho: torch.Tensor):
         super(MultivariateDiagonalGaussian, self).__init__()  # always make sure to include the super-class init call!
         assert mu.size() == rho.size()
+        self.size = mu.size()
         self.mu = mu
         self.rho = rho
 
     def log_likelihood(self, values: torch.Tensor) -> torch.Tensor:
         # TODO: Implement this
-        return 0.0
+        sigma = F.softplus(self.rho)
+        return -.5 * np.prod(self.size) * np.log(2. * np.pi) - torch.sum(torch.log(sigma)) -.5 * torch.sum(((values - self.mu) / sigma) ** 2)
 
     def sample(self) -> torch.Tensor:
         # TODO: Implement this
-        raise NotImplementedError()
+        sigma = F.softplus(self.rho)
+        s = torch.distributions.normal.Normal(torch.tensor(0., device=device), torch.tensor(1., device=device)).sample(self.size)
+        return s * sigma + self.mu
 
 
 def evaluate(model: Model, eval_loader: torch.utils.data.DataLoader, data_dir: str, output_dir: str):
