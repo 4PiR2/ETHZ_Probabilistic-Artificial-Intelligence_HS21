@@ -15,6 +15,9 @@ from util import ece, ParameterDistribution
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
 EXTENDED_EVALUATION = False
 
+np.random.seed(0)
+torch.manual_seed(0)
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def run_solution(dataset_train: torch.utils.data.Dataset, data_dir: str = os.curdir, output_dir: str = '/results/') -> 'Model':
@@ -190,7 +193,8 @@ class BayesianLayer(nn.Module):
         #  You can create constants using torch.tensor(...).
         #  Do NOT use torch.Parameter(...) here since the prior should not be optimized!
         #  Example: self.prior = MyPrior(torch.tensor(0.0), torch.tensor(1.0))
-        self.prior = UnivariateGaussian(torch.tensor(0.), torch.tensor(1.))
+        rho = torch.tensor(-2.)
+        self.prior = UnivariateGaussian(torch.tensor(0.), F.softplus(rho))
         assert isinstance(self.prior, ParameterDistribution)
         assert not any(True for _ in self.prior.parameters()), 'Prior cannot have parameters'
 
@@ -205,8 +209,8 @@ class BayesianLayer(nn.Module):
         #      torch.nn.Parameter(torch.ones((out_features, in_features)))
         #  )
         self.weights_var_posterior = MultivariateDiagonalGaussian(
-            torch.nn.Parameter(torch.zeros((out_features, in_features))),
-            torch.nn.Parameter(torch.ones((out_features, in_features)))
+            nn.Parameter(nn.init.kaiming_uniform_(torch.empty(out_features, in_features), nonlinearity='relu')),
+            nn.Parameter(torch.ones((out_features, in_features)) * rho)
         )
 
         assert isinstance(self.weights_var_posterior, ParameterDistribution)
@@ -216,8 +220,8 @@ class BayesianLayer(nn.Module):
             # TODO: As for the weights, create the bias variational posterior instance here.
             #  Make sure to follow the same rules as for the weight variational posterior.
             self.bias_var_posterior = MultivariateDiagonalGaussian(
-                torch.nn.Parameter(torch.zeros(out_features)),
-                torch.nn.Parameter(torch.ones(out_features))
+                nn.Parameter(nn.init.uniform_(torch.empty(out_features), -1. / np.sqrt(in_features), 1. / np.sqrt(in_features))),
+                nn.Parameter(torch.ones(out_features) * rho)
             )
             assert isinstance(self.bias_var_posterior, ParameterDistribution)
             assert any(True for _ in self.bias_var_posterior.parameters()), 'Bias posterior must have parameters'
