@@ -5,7 +5,9 @@ import logging
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
 import matplotlib.pyplot as plt
-
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel
+from scipy.stats import norm
 EXTENDED_EVALUATION = False
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
 
@@ -19,10 +21,13 @@ class BO_algo(object):
 
         # TODO: enter your code here
         self.previous_points = []
+        self.standard_norm = norm() #to calculate EI
         # IMPORTANT: DO NOT REMOVE THOSE ATTRIBUTES AND USE sklearn.gaussian_process.GaussianProcessRegressor instances!
         # Otherwise, the extended evaluation will break.
-        self.constraint_model = None  # TODO : GP model for the constraint function
-        self.objective_model = None  # TODO : GP model for your acquisition function
+        self.kernel_c = ConstantKernel(3.5,"fixed") * RBF(2,"fixed") + WhiteKernel(0.005**2,"fixed")
+        self.kernel_obj = ConstantKernel(1.5, "fixed") * RBF(1.5, "fixed") + WhiteKernel(0.01 ** 2, "fixed")
+        self.constraint_model = GaussianProcessRegressor(self.kernel_c)  # TODO : GP model for the constraint function
+        self.objective_model = GaussianProcessRegressor(self.kernel_obj)  # TODO : GP model for your acquisition function
 
     def next_recommendation(self) -> np.ndarray:
         """
@@ -36,6 +41,18 @@ class BO_algo(object):
 
         # TODO: enter your code here
         # In implementing this function, you may use optimize_acquisition_function() defined below.
+        if len(self.previous_points) > 0:
+            new = self.optimize_acquisition_function()
+            assert new.shape == (1,2)
+        else:
+            x0 = domain_x[0, 0] + (domain_x[0, 1] - domain_x[0, 0]) * \
+                 np.random.rand()
+            x1 = domain_x[1, 0] + (domain_x[1, 1] - domain_x[1, 0]) * \
+                 np.random.rand()
+            new = np.expand_dims(np.array([x0,x1]),axis=0)
+        return new
+
+
 
     def optimize_acquisition_function(self) -> np.ndarray:  # DON'T MODIFY THIS FUNCTION
         """
@@ -83,7 +100,27 @@ class BO_algo(object):
         """
 
         # TODO: enter your code here
-        raise NotImplementedError
+        assert x.shape == (2,)
+        ### EI
+        mean_obj,std_obj = self.objective_model.predict(x.reshape(1, -1),return_std = True)
+        previous_obj = np.array(self.previous_points)[:,2]
+        previous_constraint = np.array(self.previous_points)[:,3]
+        feasible_mask = previous_constraint < 0
+        if np.any(feasible_mask):
+            target = min(previous_obj[feasible_mask])
+            z = (target - mean_obj)/(std_obj + 1e-10)
+            CDF_Z = norm.cdf(z)
+            pdf_z = norm.pdf(z)
+            EI = std_obj*(z*CDF_Z + pdf_z)
+        else:
+            EI = 1.
+
+        ### constraint
+        mean_c,std_c = self.constraint_model.predict(x.reshape(1, -1),return_std=True)
+        Pr_C = norm.cdf(x = 0.0,loc = mean_c,scale=std_c)
+
+        return EI * Pr_C
+
 
     def add_data_point(self, x: np.ndarray, z: float, c: float):
         """
@@ -102,7 +139,11 @@ class BO_algo(object):
         assert x.shape == (1, 2)
         self.previous_points.append([float(x[:, 0]), float(x[:, 1]), float(z), float(c)])
         # TODO: enter your code here
-        raise NotImplementedError
+        X = np.array(self.previous_points)[:,:2]
+        obj = np.array(self.previous_points)[:,2]
+        constraint = np.array(self.previous_points)[:, 3]
+        self.objective_model.fit(X,obj)
+        self.constraint_model.fit(X,constraint)
 
     def get_solution(self) -> np.ndarray:
         """
@@ -115,7 +156,13 @@ class BO_algo(object):
         """
 
         # TODO: enter your code here
-        raise NotImplementedError
+        all_points = np.array(self.previous_points)
+        feasible_mask = all_points[:,3] < 0
+        feasible_points = all_points[feasible_mask,:]
+        z = feasible_points[:,2]
+        index = np.argmin(z)
+        return feasible_points[index,:2]
+
 
 
 """ 
@@ -125,7 +172,7 @@ class BO_algo(object):
 """
 domain_x = np.array([[0, 6], [0, 6]])
 EVALUATION_GRID_POINTS = 250
-CONSTRAINT_OFFSET = - 0.8  # This is an offset you can change to make the constraint more or less difficult to fulfill
+CONSTRAINT_OFFSET = -1.0 # This is an offset you can change to make the constraint more or less difficult to fulfill
 LAMBDA = 0.0  # You shouldn't change this value
 
 
@@ -248,7 +295,7 @@ def perform_extended_evaluation(agent, output_dir='./'):
 
 def train_on_toy(agent, iteration):
     logging.info('Running model on toy example.')
-    seed = 1234
+    seed = 1
     os.environ['PYTHONHASHSEED'] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -284,7 +331,7 @@ def train_on_toy(agent, iteration):
         regret = (f(solution) - f_opt) / f_max
 
     print(f'Optimal value: {f_opt}\nProposed solution {solution}\nSolution value '
-          f'{f(solution)}\nRegret{regret}')
+          f'{f(solution)}\nRegret {regret}')
     return agent
 
 
